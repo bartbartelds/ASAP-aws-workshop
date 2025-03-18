@@ -1,0 +1,31 @@
+{
+    "customerID": "CUST789345",
+    "orderID": "9LJWCJFH",
+    "items": [
+        {
+            "description": "Item G",
+            "price": 70.0,
+            "amount": 2
+        },
+        {
+            "description": "Item E",
+            "price": 50.0,
+            "amount": 9
+        },
+        {
+            "description": "Item H",
+            "price": 80.0,
+            "amount": 1
+        },
+        {
+            "description": "Item D",
+            "price": 40.0,
+            "amount": 4
+        },
+        {
+            "description": "Item B",
+            "price": 20.0,
+            "amount": 6
+        }
+    ]
+}
