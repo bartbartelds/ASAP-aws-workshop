@@ -1,5 +1,13 @@
 # AWS Beginner Workshop
 
+Versioning: 
+0.5 - Initial commit
+0.7 20250319 - added tagging, cost insight
+
+todo: 
+lambda, database configuration, glue, event bridge, crud operations / updated web app, event generator and revising of pre-built iam roles to allows workshop steps. 
+
+
 *This entire workshop is intended to be run from start to finish, with every section building upon the previous one. Please follow the instructions carefully and do not skip any steps or start halfway through.*
 
 Every caption will feature some text, and then give you some exercises to try. You can recognize the exercises by the numbering in front of them. 
@@ -514,10 +522,6 @@ aws rds create-db-instance \
 # PLEASE NOTE: There are a few options here that are NOT standard. By default, for example, you would never set your database to be publicly accessible. The only reason we do this now, is so we can use Cloudshell and psql to perform database operations.
 ```
 
-When executed correctly, you'll see a lot of meta data about the database you just created being echoed back at you in your cloudshell session. Feel free to scroll through, and see if you can understand what the output means. You can scroll with the up and down arrows, and you can quit back to your usual shell by typing ```q```.
-
-Congratuations - you've created a database. If you look at the databases screen in the RDS console page, you'll see your db - it will have the status 'Creating'. It takes a couple of minutes before it will be up and running.
-
 2. Check the status of the database you created, either using the AWS console or by running: 
 ```bash
 aws rds describe-db-instances \
@@ -526,6 +530,291 @@ aws rds describe-db-instances \
 ```
 
 You'll see the database going through several statusses while spinning up. First it will be 'creating', then 'backing-up' and finally 'available'.
+
+Congratuations - you've created a database. 
+
+## Tagging
+
+You may have noticed that the resources you've created have tags attached to them. Most services and resources you can deploy in AWS can be tagged. And tags can be used for basically anything. 
+
+A tag is just that: an identifier or label that you stick onto a resource. They can be useful for maintenance purposes - or just to tell who created what, when or why. 
+
+Tags are also very useful when you need to allocate AWS cost to a specific application that consists of several infrastructure components. For example, you may want to know what the stack you've just deployed - two web servers, a load balancer and a database - actually costs. 
+
+Tagging is not a mandatory practice - and if you're the only one using a particular AWS account, or you know for a fact that all cost incurred in an account can be attributed to a single application or responsible party, you can just use the account-wide cost explorer and cost dashboard. 
+
+But in your case, you're not the only one using this particular account. And you may want some more granular insight. 
+
+You'll may have noticed the following option in a lot of the AWS CLI commands you've used up to this point: 
+
+```bash
+ --tags Key=CREATED_BY,Value="$(aws sts get-caller-identity --query Arn --output text | awk -F'/''{print $NF}')"
+
+ # try running the following snippet in cloudshell:
+ aws sts get-caller-identity --query Arn --output text
+
+ # you'll see that the output is something like the following:
+ # aarn:aws:iam::391614831370:user/your-username
+
+ # now run the following: 
+ aws sts get-caller-identity --query Arn --output text | awk -F'/' '{print $NF}'
+
+ # you'll see that the output is something like the following:
+ # your-username
+
+ # awk is a linux command line tool that can be used to perform actions on files and strings. 
+ # In this case, it's used to extract the value of the 'your-username' part of the string. 
+ # After the aws sts command, we pipe the full arn into the awk command in order to reformat the arn to the snippet of text we actually want to use. 
+```
+
+So that's how we end up with the CREATED_BY - your-username tags. 
+
+You can check all resources created and tagged with CREATED_BY and your-username, by running the following command: 
+
+```bash
+aws resourcegroupstaggingapi get-resources --tag-filters Key=CREATED_BY,Values=$(aws sts get-caller-identity --query Arn --output text | awk -F'/' '{print $NF}')
+
+# scroll through the output using the up and down arrows. You'll recognize the output and specific aws services you've spun up.
+# press q when you're done.
+```
+
+## AWS cost and cost insight
+
+To monitor cost incurred by services running in an account, you can use the AWS cost explorer. It's pretty self explanatory - you can filter by service, instance type, region, usage type, etc.
+
+You can also use cli to get some insight into cost that you have generated up to now.
+
+1. Run the following command to get cost per service that you have generated over the last 30 days: 
+```bash
+aws ce get-cost-and-usage \
+    --time-period Start=$(date -d "-30 days" +%Y-%m-%d),End=$(date +%Y-%m-%d) \
+    --granularity MONTHLY \
+    --metrics "UnblendedCost" \
+    --filter '{
+        "Tags": {
+            "Key": "CREATED_BY",
+            "Values": ["'"$(aws sts get-caller-identity --query Arn --output text | awk -F '/' '{print $NF}')"'", "None"],
+            "MatchOptions": ["EQUALS"]
+        }
+    }' \
+    --group-by '[{"Type":"DIMENSION","Key":"SERVICE"}]' \
+    --query "ResultsByTime[0].Groups[*].[Keys[0], Metrics.UnblendedCost.Amount]" \
+    --output table
+
+# notice that the command explicitly filters on the CREATED_BY tag, and your username as a value. If your resources are not tagged, they won't show up.
+```
+
+In very practical terms, you're playing around in my personal aws account. So I've implemented some measures that keep you from spending a ton of money on my behalf. Although the resources you'll deploy and build during the workshop technically are not free, in practical terms you'll be surprised how little you actually end up spending.
+
+How to actually architect for cost is a whole different topic, which requires you to understand your requirements and the behavior of your workload. If you want to delve into actual architecture topics, read up on the AWS well architected framework. It guides you through a lot of relevant considerations when architecting for cloud deployments (and tends to make your designs better as a whole).
+
+## Lambda
+
+When spinning up resources in AWS, you tend to pay for what you use when you use it. For serverless services like AWS Lambda, you only pay for compute time while the Lambda function is running.
+
+Serverless is an interesting term. In practical terms, a service can be called serverless when you don't have to provide infrastructure and spin up servers yourself in order to use it. 
+
+Lambda is a serverless service that allows you to run code without provisioning a server for the code to run on. So you don't first have to start a virtual machine / ec2 or spin up a container before your code can execute. 
+
+Don't be fooled though - obviously your code needs to run somewhere. But the way AWS has set up the service, you don't have to worry about that. It's all taken care of for you. All you have to do is write your code, deploy it and have it run when you need it to. And AWS will bill you for the compute resources required to run your code. 
+
+More traditional, IAAS services like EC2, and to an extent RDS, incur a cost while instances are running. Because even when you're not actively putting load on the instance, it's still up, running and reserved for you. 
+
+You can save some money by stopping instances when you don't need them. This can be useful for non-prd workloads, for example, that you may not need outside of office hours. 
+
+We can automate shutting down the infrastructure you provisioned with a lambda function. Let's create one to handle that task for you.
+
+1. First, we'll create the python script that lambda will run - which is supposed to check for running ec2 and rds instances and shut them down. Create a new file paste the following code:
+```python
+import boto3
+
+# User must set this value before running the function
+IAM_USERNAME = "your-username-here"  # <-- Change this to the IAM user you want to filter by
+
+def lambda_handler(event, context):
+    ec2_client = boto3.client('ec2')
+    rds_client = boto3.client('rds')
+
+    print(f"Filtering EC2 and RDS instances for user: {IAM_USERNAME}")
+
+    # Stop EC2 instances with tag CREATED_BY = IAM_USERNAME
+    ec2_instances = ec2_client.describe_instances(
+        Filters=[
+            {'Name': 'instance-state-name', 'Values': ['running']},
+            {'Name': 'tag:CREATED_BY', 'Values': [IAM_USERNAME]}
+        ]
+    )
+
+    ec2_instance_ids = [
+        instance['InstanceId']
+        for reservation in ec2_instances['Reservations']
+        for instance in reservation['Instances']
+    ]
+
+    if ec2_instance_ids:
+        ec2_client.stop_instances(InstanceIds=ec2_instance_ids)
+        print(f"Stopping EC2 instances: {ec2_instance_ids}")
+    else:
+        print("No running EC2 instances found for user:", IAM_USERNAME)
+
+    # Stop RDS instances with tag CREATED_BY = IAM_USERNAME
+    rds_instances = rds_client.describe_db_instances()
+    
+    rds_stopped = False
+    for db_instance in rds_instances['DBInstances']:
+        db_instance_id = db_instance['DBInstanceIdentifier']
+        tags = rds_client.list_tags_for_resource(
+            ResourceName=db_instance['DBInstanceArn']
+        )['TagList']
+
+        # Check if CREATED_BY tag exists and matches IAM_USERNAME
+        for tag in tags:
+            if tag['Key'] == 'CREATED_BY' and tag['Value'] == IAM_USERNAME:
+                if db_instance['DBInstanceStatus'] == 'available':  # Running state
+                    rds_client.stop_db_instance(DBInstanceIdentifier=db_instance_id)
+                    print(f"Stopping RDS instance: {db_instance_id}")
+                    rds_stopped = True
+                break
+
+    if not rds_stopped:
+        print("No running RDS instances found for user:", IAM_USERNAME)
+
+    return {"status": "Success", "user": IAM_USERNAME}
+```
+
+2. Create a zip file from the lambda function:
+```bash
+zip -r YOUR_ZIP_FILE.zip lambda_function.py
+```
+
+Now you have the functionality you want the lambda function to perform in a zip file. But in order to affect resources in AWS successfully, lambda needs to be able to assume the right permissions at runtime. 
+
+This is handled via an IAM role. An AWS IAM role is a set of permissions that a process that is allowed to assume that role, may affect. In this case, you want the lambda function to be able to stop ec2 and rds instances that you created, and are tagged with the CREATED_BY / your-iam-user tag.
+
+In technical terms, an IAM role is simply a collection of IAM policies - and policies are JSON documents that contains a set of permissions that a process that is allowed to assume that role, may (or may not) affect.
+
+IAM roles can be created in the AWS console - but this can also be handled via the AWS CLI.
+
+3. First, let's create an IAM policy:
+
+```bash
+#First, run the following command in cloudshell: 
+IAM_USERNAME=$(aws sts get-caller-identity --query Arn --output text | awk -F '/' '{print $NF}')
+echo "IAM User: $IAM_USERNAME"
+
+# This stores your iam username in the IAM_USERNAME environment variable in your shell. You can then use it in follow-up commands. Will use this to create an IAM policy: 
+
+aws iam create-policy \
+    --policy-name "EC2-RDS-Control-Policy-$IAM_USERNAME" \
+    --policy-document "{
+        \"Version\": \"2012-10-17\",
+        \"Statement\": [
+            {
+                \"Effect\": \"Allow\",
+                \"Action\": [
+                    \"ec2:DescribeInstances\",
+                    \"ec2:StopInstances\",
+                    \"ec2:StartInstances\"
+                ],
+                \"Resource\": \"*\",
+                \"Condition\": {
+                    \"StringEquals\": {
+                        \"ec2:ResourceTag/CREATED_BY\": \"$IAM_USERNAME\"
+                    }
+                }
+            },
+            {
+                \"Effect\": \"Allow\",
+                \"Action\": [
+                    \"rds:DescribeDBInstances\",
+                    \"rds:StopDBInstance\",
+                    \"rds:StartDBInstance\"
+                ],
+                \"Resource\": \"*\",
+                \"Condition\": {
+                    \"StringEquals\": {
+                        \"rds:db-tag/CREATED_BY\": \"$IAM_USERNAME\"
+                    }
+                }
+            },
+            {
+                \"Effect\": \"Allow\",
+                \"Action\": [
+                    \"ec2:DescribeTags\",
+                    \"rds:ListTagsForResource\"
+                ],
+                \"Resource\": \"*\"
+            }
+        ]
+    }"
+```
+
+
+
+Notice that the policy we created Allows the following:
+
+- Describe ec2 instances with tag CREATED_BY = IAM_USERNAME
+- Stop ec2 instances with tag CREATED_BY = IAM_USERNAME
+- Start ec2 instances with tag CREATED_BY = IAM_USERNAME
+- Describe rds instances with tag CREATED_BY = IAM_USERNAME
+- Stop rds instances with tag CREATED_BY = IAM_USERNAME
+- Start rds instances with tag CREATED_BY = IAM_USERNAME
+- Describe ec2 tags
+- Describe rds tags
+
+AWS has a lot of granularity when it comes to IAM policies. You can find out more about IAM policies here: https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies.html
+
+It tends to be easier to create policies in the AWS console, especially when you're not entirely sure what you're looking for. If you do - and if you want to be fast, creating them through cli or code is quicker. 
+
+Now that we have a policy, we need to attach it to a role.
+
+4. Attach the policy to the role:
+```bash
+# Setting the IAM_USERNAME environment variable is only necessary if you no longer have it set:
+IAM_USERNAME=$(aws sts get-caller-identity --query Arn --output text | awk -F '/' '{print $NF}')
+
+# Then attach your policy to a new role. 
+aws iam attach-role-policy \
+    --role-name "LambdaStopEC2RDS-$IAM_USERNAME-role" \
+    --policy-arn "arn:aws:iam::391614831370:policy/EC2-RDS-Control-Policy-$IAM_USERNAME"
+```
+
+Great, now you have created a role that grants lambda the required permissions when it runs your code. 
+You can also find out more about IAM roles here: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles.html
+
+Time to create the actual lambda. 
+
+5. Run the following command in Cloudshell:
+```bash
+aws lambda create-function \
+    --function-name "stopec2rds-$(aws sts get-caller-identity --query Arn --output text | awk -F '/' '{print $NF}')" \
+    --runtime python3.13 \
+    --role arn:aws:iam::391614831370:role/LambdaStopEC2RDS-$IAM_USERNAME-role \
+    --handler lambda_function.lambda_handler \
+    --zip-file fileb://YOUR_ZIP_FILE.zip   
+```
+
+This creates the lambda function, uploads the code and configures it to use the IAM role you created.
+
+Time to test it out! 
+
+6. Look up your function in AWS lambda console, and hit the test button. (You don't have to configure a test event since the function doesn't use any input data).
+
+Have a look at the logs, and verify that the function is doing what you expect it to do.
+
+You might also want to look up your ec2 and rds instances to see they're really shut down.
+
+For reference, you can also try running the lambda function from the command line:
+```bash
+aws lambda invoke --function-name "stopec2rds-$(aws sts get-caller-identity --query Arn --output text | awk -F '/' '{print $NF}')" response.txt
+```
+
+
+
+
+
+
+## Creating your database schema
 
 >> Proceed once your database reports 'Available'.
 
@@ -574,3 +863,78 @@ Since psql behaves differently than your regular shell, we'll go over a couple o
 
 You can also use ```\?``` to get a list of all available commands.
 
+Alright, back to business. In order to ingest data into the database, we need to generate a database schema that will match the data we're ingesting.
+
+1. Run the following psql command: 
+```sql
+-- Create the customers table
+CREATE TABLE customers (
+    customer_id VARCHAR(20) PRIMARY KEY
+);
+
+-- Create the orders table
+CREATE TABLE orders (
+    order_id VARCHAR(20) PRIMARY KEY,
+    customer_id VARCHAR(20) NOT NULL,
+    order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE CASCADE
+);
+
+-- Create the items table
+CREATE TABLE items (
+    item_id SERIAL PRIMARY KEY,
+    description VARCHAR(255) NOT NULL UNIQUE,
+    price DECIMAL(10,2) NOT NULL CHECK (price > 0)
+);
+
+-- Create the order details table (Many-to-Many Relationship between orders and items)
+CREATE TABLE order_details (
+    order_detail_id SERIAL PRIMARY KEY,
+    order_id VARCHAR(20) NOT NULL,
+    item_id INT NOT NULL,
+    amount INT NOT NULL CHECK (amount > 0),
+    FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE,
+    FOREIGN KEY (item_id) REFERENCES items(item_id) ON DELETE CASCADE
+);
+```
+
+2. Now, we need to create a database user that AWS Glue can use when ingesting data. 
+```sql
+CREATE USER glue_user WITH PASSWORD 'glue_password';
+GRANT ALL PRIVILEGES ON DATABASE orders TO glue_user;
+```
+
+3. And while we're at it, let's also create a user that our web app can use to access the database. 
+```sql
+CREATE USER web_app_user WITH PASSWORD 'web_app_password';
+GRANT ALL PRIVILEGES ON DATABASE orders TO web_app_user;
+```
+
+## Lambda and Glue
+
+For ETL, we'll use an AWS service called Glue. Matillion is currently also using Glue to run its processes (DPC has its own agents). 
+
+Glue is a data integration service that allows you to connect and transform data between different sources (like databases, S3, and others) and store it in a database.
+
+The ETL process definition will be stored in a Glue job. But in order for the job to run, we need a way to trigger it. So let's use an S3 trigger, that fires when a new file is added to our S3 bucket. We can use AWS Lambda to catch the event - and then in turn trigger the Glue job.
+
+Lambda is a serverless computing service that allows you to run code without having to worry about the underlying infrastructure. It has several runtimes, among which is python. 
+
+1. Create an AWS Lambda function that will be triggered when a new file is added to the bucket.
+
+1. Create an AWS Glue connection to the database. 
+Go to the AWS Glue Console → Connections.
+Click Add Connection → Select JDBC.
+Enter:
+Name: glue-postgres-connection
+JDBC URL:
+bash
+Copy
+Edit
+jdbc:postgresql://your-postgres-endpoint:5432/your_database
+Username: your_db_user
+Password: your_db_password
+Select the appropriate VPC, subnet, and security group.
+Click Test Connection and save.
+
+4. Create a 
